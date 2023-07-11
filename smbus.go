@@ -25,6 +25,7 @@ const (
 	i2cSMBusRead  uint8 = 1
 
 	// size identifiers
+	i2cSMBusByte         uint32 = 1
 	i2cSMBusByteData     uint32 = 2
 	i2cSMBusWordData     uint32 = 3
 	i2cSMBusBlockData    uint32 = 5
@@ -85,6 +86,40 @@ func (c *Conn) Read(p []byte) (int, error) {
 // Close closes the connection to the remote i2c device.
 func (c *Conn) Close() error {
 	return c.f.Close()
+}
+
+// ReadByte reads a single byte.
+func (c *Conn) ReadByte(addr, reg uint8) (ret uint8, err2 error) {
+	if err := c.addr(addr); err != nil {
+		return 0, err
+	}
+
+	var v uint8
+	cmd := i2cCmd{
+		rw:  i2cSMBusRead,
+		cmd: reg,
+		len: i2cSMBusByte,
+		ptr: unsafe.Pointer(&v),
+	}
+	ptr := unsafe.Pointer(&cmd)
+	err := ioctl(c.f.Fd(), i2cSMBus, uintptr(ptr))
+	return v, err
+}
+
+// WriteSingleByte writes a single byte v.
+func (c *Conn) WriteSingleByte(addr, reg, v uint8) error {
+	if err := c.addr(addr); err != nil {
+		return err
+	}
+
+	cmd := i2cCmd{
+		rw:  i2cSMBusWrite,
+		cmd: reg,
+		len: i2cSMBusByte,
+		ptr: unsafe.Pointer(&v),
+	}
+	ptr := unsafe.Pointer(&cmd)
+	return ioctl(c.f.Fd(), i2cSMBus, uintptr(ptr))
 }
 
 // ReadReg reads a single byte from a designated register.
@@ -183,6 +218,30 @@ func (c *Conn) ReadBlockData(addr, reg uint8, buf []byte) error {
 	return nil
 }
 
+// WriteNonI2CBlockData writes the buf byte slice to a designated register.
+func (c *Conn) WriteNonI2CBlockData(addr, reg uint8, buf []byte) error {
+	if len(buf) > int(i2cSMBusBlockMax) {
+		return errSMBusBlockDataMax
+	}
+
+	if err := c.addr(addr); err != nil {
+		return err
+	}
+
+	data := make([]byte, 1+len(buf), i2cSMBusBlockMax+2)
+	data[0] = byte(len(buf))
+	copy(data[1:], buf)
+
+	cmd := i2cCmd{
+		rw:  i2cSMBusWrite,
+		cmd: reg,
+		len: i2cSMBusBlockData,
+		ptr: unsafe.Pointer(&data[0]),
+	}
+	ptr := unsafe.Pointer(&cmd)
+	return ioctl(c.f.Fd(), i2cSMBus, uintptr(ptr))
+}
+
 // WriteBlockData writes the buf byte slice to a designated register.
 func (c *Conn) WriteBlockData(addr, reg uint8, buf []byte) error {
 	if len(buf) > int(i2cSMBusBlockMax) {
@@ -211,6 +270,7 @@ func (c *Conn) addr(addr uint8) error {
 	return ioctl(c.f.Fd(), i2cSlave, uintptr(addr))
 }
 
+// SetAddr sets the address to be used on the I2C bus
 func (c *Conn) SetAddr(addr uint8) error {
 	return c.addr(addr)
 }
